@@ -47,8 +47,23 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         json=payload
     )
 
-    answer = r.json()["choices"][0]["message"]["content"]
-    await update.message.reply_text(answer)
+    if r.status_code != 200:
+    await update.message.reply_text(
+        f"Ошибка OpenAI 😢\n\n{r.text}"
+    )
+    return
+
+data = r.json()
+
+if "choices" not in data:
+    await update.message.reply_text(
+        f"Неожиданный ответ от OpenAI:\n{data}"
+    )
+    return
+
+answer = data["choices"][0]["message"]["content"]
+await update.message.reply_text(answer)
+
 
 app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
