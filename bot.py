@@ -7,7 +7,7 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Анализирую букет… 🌸")
+    await update.message.reply_text("🌸 Анализирую букет… 🌸")
 
     photo = update.message.photo[-1]
     file = await context.bot.get_file(photo.file_id)
