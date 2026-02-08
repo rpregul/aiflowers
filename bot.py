@@ -9,18 +9,17 @@ from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, Callb
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
+# Эндпоинт chat/completions
+CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
+
 # Модели
 ANALYSIS_MODEL = "google/gemma-3-12b-it:free"
 DRAW_MODEL = "blackforest/flux.2-pro"
 
-# Эндпоинты
-CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
-IMAGE_URL = "https://openrouter.ai/api/v1/images/generations"
-
 # Состояние пользователя
 user_bouquet_state = {}
 
-# --- Анализ фото ---
+# --- Функция анализа фото ---
 async def analyze_bouquet(photo_bytes: bytes):
     image = Image.open(io.BytesIO(photo_bytes))
     image.thumbnail((1024, 1024))
@@ -29,14 +28,15 @@ async def analyze_bouquet(photo_bytes: bytes):
     img_base64 = base64.b64encode(buf.getvalue()).decode()
 
     prompt = (
-        "📸 Проанализируй фото букета и дай коротко:\n"
+        "📸 Проанализируй фото букета коротко:\n"
         "🌸 Какие цветы и количество (в одном пункте, жирным, без звездочек)\n"
-        "💰 Средняя стоимость букета в рублях, конкретно и коротко\n"
+        "💰 Средняя стоимость букета в рублях, коротко и конкретно\n"
         "Используй эмодзи для удобного чтения."
     )
 
     payload = {
         "model": ANALYSIS_MODEL,
+        "modalities": ["text","image"],
         "messages": [
             {
                 "role": "user",
@@ -59,18 +59,23 @@ async def generate_bouquet_image(bouquet_text: str):
     prompt = f"🎨 Сгенерируй реалистичное изображение букета по составу:\n{bouquet_text}"
     payload = {
         "model": DRAW_MODEL,
-        "prompt": prompt,
-        "size": "1024x1024",
-        "n": 1
+        "modalities": ["text","image"],
+        "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
     }
+
     headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
-    response = requests.post(IMAGE_URL, headers=headers, json=payload, timeout=120)
+    response = requests.post(CHAT_URL, headers=headers, json=payload, timeout=120)
     response.raise_for_status()
     data = response.json()
 
-    img_base64 = data["data"][0]["b64_json"]
-    img_bytes = base64.b64decode(img_base64)
-    return io.BytesIO(img_bytes)
+    images = data["choices"][0]["message"].get("images", [])
+    if images:
+        img_url = images[0]["image_url"]["url"]
+        if img_url.startswith("data:image"):
+            header, img_base64 = img_url.split(",", 1)
+            img_bytes = base64.b64decode(img_base64)
+            return io.BytesIO(img_bytes)
+    return None
 
 # --- Обработка фото ---
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -84,16 +89,15 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_bouquet_state[update.message.from_user.id] = text
 
         keyboard = [
-            [InlineKeyboardButton("💐 Сделать меньше", callback_data="smaller")],
-            [InlineKeyboardButton("💐 Сделать больше/пышнее", callback_data="bigger")],
-            [InlineKeyboardButton("🎨 Получить рисунок", callback_data="draw")],
-            [InlineKeyboardButton("🛒 Оформить заказ", callback_data="order")],
+            [InlineKeyboardButton("💐 Меньше (~20%)", callback_data="smaller")],
+            [InlineKeyboardButton("💐 Больше (~20%)", callback_data="bigger")],
+            [InlineKeyboardButton("🎨 Рисунок", callback_data="draw")],
+            [InlineKeyboardButton("🛒 Купить", callback_data="order")]
         ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text(f"{text}", reply_markup=reply_markup)
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
     except Exception as e:
-        await update.message.reply_text(f"Ошибка: {str(e)}")
+        await update.message.reply_text(f"Ошибка: {e}")
 
 # --- Обработка кнопок ---
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -105,53 +109,52 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if query.data in ["smaller", "bigger"]:
             if query.data == "smaller":
-                msg = "🔽 Собираю чуть меньший букет (~20% меньше) 🌸"
-                instruction = "уменьши букет на ~20%, сохрани концепцию и изюминку"
+                msg = "🔽 Формирую чуть меньший букет…"
+                instruction = "уменьши букет на 20%, сохрани стиль"
             else:
-                msg = "🔼 Собираю более пышный букет (+20% цветов) 🌸"
-                instruction = "увеличь букет на ~20%, сохрани концепцию и изюминку"
+                msg = "🔼 Формирую более пышный букет…"
+                instruction = "увеличь букет на 20%, сохрани стиль"
 
             await query.edit_message_text(msg)
 
-            prompt = f"Коротко пересоставь букет, {instruction}:\n{current_bouquet}"
+            prompt = f"{instruction}:\n{current_bouquet}"
             payload = {
                 "model": ANALYSIS_MODEL,
                 "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
             }
             headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
-            response = requests.post(CHAT_URL, headers=headers, json=payload, timeout=90)
-            response.raise_for_status()
-            data = response.json()
-            new_bouquet = data["choices"][0]["message"]["content"]
+            resp = requests.post(CHAT_URL, headers=headers, json=payload, timeout=90)
+            resp.raise_for_status()
+            new_bouquet = resp.json()["choices"][0]["message"]["content"]
             user_bouquet_state[user_id] = new_bouquet
 
             keyboard = [
-                [InlineKeyboardButton("🎨 Получить рисунок", callback_data="draw")],
-                [InlineKeyboardButton("🛒 Оформить заказ", callback_data="order")],
+                [InlineKeyboardButton("🎨 Рисунок", callback_data="draw")],
+                [InlineKeyboardButton("🛒 Купить", callback_data="order")]
             ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.message.reply_text(f"{new_bouquet}", reply_markup=reply_markup)
+            await query.message.reply_text(new_bouquet, reply_markup=InlineKeyboardMarkup(keyboard))
 
         elif query.data == "draw":
-            await query.edit_message_text("🎨 Генерирую рисунок букета…")
+            await query.edit_message_text("🎨 Генерирую рисунок...")
             img_io = await generate_bouquet_image(current_bouquet)
-            await query.message.reply_photo(photo=InputFile(img_io, filename="bouquet.png"))
+            if img_io:
+                await query.message.reply_photo(photo=InputFile(img_io, filename="bouquet.png"))
+            else:
+                await query.message.reply_text("❌ Не удалось сгенерировать картинку.")
 
-            keyboard = [[InlineKeyboardButton("🛒 Отправить флористу и внести предоплату", callback_data="order")]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.message.reply_text("Что делать дальше?", reply_markup=reply_markup)
+            keyboard = [[InlineKeyboardButton("🛒 Купить", callback_data="order")]]
+            await query.message.reply_text("Что дальше?", reply_markup=InlineKeyboardMarkup(keyboard))
 
         elif query.data == "order":
-            await query.edit_message_text("✅ Заказ оформлен! Флорист получит состав букета. Для внесения предоплаты следуйте инструкциям.")
-
+            await query.edit_message_text("✅ Заказ оформлен! Флорист получит состав букета.")
     except Exception as e:
-        await query.message.reply_text(f"Ошибка при обработке кнопки: {str(e)}")
+        await query.message.reply_text(f"Ошибка при обработке: {e}")
 
-# --- Обработка текста ---
+# --- Текстовые сообщения ---
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📸 Отправь фото букета")
 
-# --- Запуск бота ---
+# --- Запуск ---
 def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
