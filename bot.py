@@ -1,9 +1,17 @@
 import os
 import logging
+import io
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
-import google.generativeai as genai
-import io
+from PIL import Image
+
+# Новая библиотека Google Gemini
+try:
+    import google.genai as genai
+    GEMINI_NEW = True
+except ImportError:
+    import google.generativeai as genai
+    GEMINI_NEW = False
 
 # Настройка логирования
 logging.basicConfig(
@@ -27,89 +35,191 @@ if not GEMINI_API_KEY:
 
 # Настройка Gemini
 try:
-    genai.configure(api_key=GEMINI_API_KEY)
-    logger.info("✅ Gemini настроен успешно")
+    if GEMINI_NEW:
+        # Новая версия API
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        logger.info("✅ Используется НОВАЯ библиотека google.genai")
+    else:
+        # Старая версия API
+        genai.configure(api_key=GEMINI_API_KEY)
+        logger.info("✅ Используется СТАРАЯ библиотека google.generativeai")
 except Exception as e:
     logger.error(f"❌ Ошибка настройки Gemini: {e}")
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик фото"""
     try:
-        await update.message.reply_text("📸 Получил фото, анализирую через AI...")
+        await update.message.reply_text("📸 Анализирую фото...")
         
         # Получаем фото
-        photo = update.message.photo[-1]  # Самое качественное
+        photo = update.message.photo[-1]
         file = await context.bot.get_file(photo.file_id)
         
-        # Скачиваем фото в память
+        # Скачиваем фото
         photo_bytes = await file.download_as_bytearray()
-        
-        # Конвертируем в PIL Image
-        from PIL import Image
         image = Image.open(io.BytesIO(photo_bytes))
         
-        # Проверяем размер
-        logger.info(f"Размер изображения: {image.size}")
+        logger.info(f"📷 Размер фото: {image.size}")
         
         # Анализируем
-        response = await analyze_photo_with_gemini(image)
+        if GEMINI_NEW:
+            response = await analyze_with_new_gemini(image)
+        else:
+            response = await analyze_with_old_gemini(image)
         
-        # Отправляем результат
         await update.message.reply_text(response)
         
     except Exception as e:
-        logger.error(f"❌ Ошибка в handle_photo: {e}")
-        await update.message.reply_text(
-            f"❌ Ошибка анализа: {str(e)[:100]}"
-        )
+        logger.error(f"❌ Ошибка обработки: {e}")
+        await update.message.reply_text("❌ Ошибка. Используется демо-режим.")
 
-async def analyze_photo_with_gemini(image):
-    """Анализ фото через Gemini"""
+async def analyze_with_new_gemini(image):
+    """Анализ через НОВУЮ библиотеку google.genai"""
     try:
-        # ИСПРАВЛЕНО: Используем правильное имя модели
-        # Доступные модели: gemini-1.0-pro, gemini-1.5-pro, gemini-1.5-flash-latest
-        model = genai.GenerativeModel('gemini-1.5-flash-latest')
+        client = genai.Client(api_key=GEMINI_API_KEY)
         
-        # Простой промпт
+        # Конвертируем изображение в base64
+        import base64
+        from io import BytesIO
+        
+        buffered = BytesIO()
+        image.save(buffered, format="JPEG")
+        img_str = base64.b64encode(buffered.getvalue()).decode()
+        
         prompt = """
-        Посмотри на фото. Это букет цветов?
-        Если да, то:
-        1. Какие цветы ты видишь? (названия на русском)
-        2. Сколько примерно каждого вида?
-        3. Сколько может стоить такой букет в Москве?
+        Ты эксперт-флорист. Проанализируй фото букета цветов.
+        Ответь на русском:
+        1. Какие цветы видишь?
+        2. Примерное количество каждого вида?
+        3. Примерная стоимость в Москве?
         
-        Ответь на русском языке кратко и понятно.
+        Кратко и с эмодзи.
         """
         
         # Отправляем запрос
-        response = model.generate_content([prompt, image])
+        result = client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=[prompt, genai.types.Part.from_bytes(
+                data=buffered.getvalue(),
+                mime_type="image/jpeg"
+            )]
+        )
         
-        # Проверяем ответ
-        if response.text:
-            return f"🌸 Анализ букета:\n\n{response.text}"
-        else:
-            return "🤔 AI не смог определить цветы на фото. Попробуйте другое изображение."
-            
+        return f"🌸 **Анализ букета:**\n\n{result.text}"
+        
     except Exception as e:
-        logger.error(f"❌ Ошибка Gemini: {e}")
-        return f"⚠️ Ошибка AI. Попробуйте другое фото."
+        logger.error(f"❌ Ошибка новой Gemini: {e}")
+        return await get_demo_response()
+
+async def analyze_with_old_gemini(image):
+    """Анализ через СТАРУЮ библиотеку google.generativeai"""
+    try:
+        # Пробуем разные модели
+        models_to_try = [
+            'gemini-1.0-pro',
+            'models/gemini-1.0-pro',
+            'gemini-pro',
+            'gemini-1.5-flash'
+        ]
+        
+        for model_name in models_to_try:
+            try:
+                logger.info(f"Пробую модель: {model_name}")
+                model = genai.GenerativeModel(model_name)
+                
+                prompt = "Что на этом фото? Если это цветы, опиши кратко."
+                
+                response = model.generate_content([prompt, image])
+                
+                if response.text:
+                    return f"📊 **Анализ:**\n\n{response.text}"
+                    
+            except Exception as e:
+                logger.info(f"Модель {model_name} не сработала: {e}")
+                continue
+        
+        # Если ни одна модель не сработала
+        return await get_demo_response()
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка старой Gemini: {e}")
+        return await get_demo_response()
+
+async def get_demo_response():
+    """Демо-ответ для тестирования"""
+    import random
+    
+    demo_responses = [
+        """🌸 **Демо-анализ букета:**
+        
+        📋 **Состав:**
+        - Красные розы: 7-9 шт.
+        - Белые хризантемы: 5-7 шт.
+        
+        💰 **Стоимость в Москве:**
+        2500-3500 рублей
+        
+        💡 **Впечатление:**
+        Классический романтический букет""",
+        
+        """🌷 **Демо-анализ букета:**
+        
+        📋 **Состав:**
+        - Тюльпаны разных цветов: 12-15 шт.
+        - Зелень
+        
+        💰 **Стоимость в Москве:**
+        1800-2500 рублей
+        
+        💡 **Впечатление:**
+        Свежий весенний букет""",
+        
+        """💐 **Демо-анализ букета:**
+        
+        📋 **Состав:**
+        - Пионы: 3-5 шт.
+        - Розы: 5-7 шт.
+        - Зелень
+        
+        💰 **Стоимость в Москве:**
+        3500-4500 рублей
+        
+        💡 **Впечатление:**
+        Пышный праздничный букет"""
+    ]
+    
+    demo = random.choice(demo_responses)
+    demo += "\n\n⚠️ *Это демо-режим. Настройте Gemini API для реального анализа.*"
+    return demo
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик текста"""
-    text = update.message.text
+    text = update.message.text.lower()
     
-    if text in ['/start', '/help', 'start', 'help']:
-        message = """
-        🌸 **Flower Analyzer Bot** 🌸
+    if text in ['/start', 'start', '/help', 'help']:
+        status = "✅ Активен" if GEMINI_API_KEY else "❌ Не настроен"
+        lib_version = "НОВАЯ (google.genai)" if GEMINI_NEW else "старая (google.generativeai)"
+        
+        message = f"""
+🌸 **Flower Analyzer Bot** 🌸
 
-        Просто отправьте мне фото букета цветов!
+📊 **Статус AI:** {status}
+🔧 **Библиотека:** {lib_version}
 
-        Я проанализирую его с помощью AI и скажу:
-        • Какие цветы в букете
-        • Примерное количество
-        • Ориентировочную стоимость в Москве
+📸 **Как работает:**
+1. Отправьте фото букета
+2. AI анализирует изображение
+3. Получаете детальный анализ
 
-        📸 Отправьте фото прямо сейчас!
+🤖 **Что определяю:**
+• Виды цветов в букете
+• Примерное количество
+• Стоимость в Москве
+
+⚠️ *Сейчас в демо-режиме*
+*Настройте Gemini API для реального AI*
+
+📸 **Отправьте фото букета!**
         """
         await update.message.reply_text(message)
     else:
@@ -118,33 +228,32 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     """Запуск бота"""
     logger.info("=" * 50)
-    logger.info("🚀 ЗАПУСК БОТА...")
-    logger.info(f"Telegram Token: {'УСТАНОВЛЕН' if TELEGRAM_TOKEN else 'ОТСУТСТВУЕТ'}")
-    logger.info(f"Gemini API Key: {'УСТАНОВЛЕН' if GEMINI_API_KEY else 'ОТСУТСТВУЕТ'}")
+    logger.info("🚀 ЗАПУСК FLOWER ANALYZER BOT")
+    logger.info(f"📱 Telegram: {'✅' if TELEGRAM_TOKEN else '❌'}")
+    logger.info(f"🤖 Gemini: {'✅' if GEMINI_API_KEY else '❌'}")
+    logger.info(f"📚 Библиотека: {'НОВАЯ google.genai' if GEMINI_NEW else 'СТАРАЯ google.generativeai'}")
     logger.info("=" * 50)
     
-    # Создаем приложение с более стабильными настройками
+    # Создаем приложение
     app = ApplicationBuilder() \
         .token(TELEGRAM_TOKEN) \
-        .connection_pool_size(8) \
         .pool_timeout(30) \
+        .read_timeout(30) \
+        .write_timeout(30) \
         .build()
     
     # Добавляем обработчики
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT, handle_text))
     
-    # Запускаем с обработкой ошибок
-    logger.info("✅ Бот запущен! Ожидаю сообщений...")
-    
-    try:
-        app.run_polling(
-            poll_interval=0.5,
-            timeout=30,
-            drop_pending_updates=True  # Важно: игнорируем старые сообщения
-        )
-    except Exception as e:
-        logger.error(f"Критическая ошибка: {e}")
+    # Запускаем с очисткой старых сообщений
+    logger.info("✅ Бот запущен в демо-режиме!")
+    app.run_polling(
+        poll_interval=1.0,
+        drop_pending_updates=True,
+        allowed_updates=Update.ALL_TYPES,
+        close_loop=False
+    )
 
 if __name__ == '__main__':
     main()
