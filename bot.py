@@ -10,7 +10,11 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-MODEL = "google/gemma-3-12b-it:free"
+
+# Модель для анализа
+ANALYSIS_MODEL = "google/gemma-3-12b-it:free"
+# Модель для генерации изображения
+DRAW_MODEL = "blackforest/flux.2-pro"
 
 # Состояние для каждого пользователя
 user_bouquet_state = {}
@@ -24,7 +28,7 @@ async def analyze_bouquet(photo_bytes: bytes):
     img_base64 = base64.b64encode(buf.getvalue()).decode()
 
     payload = {
-        "model": MODEL,
+        "model": ANALYSIS_MODEL,
         "messages": [
             {
                 "role": "user",
@@ -49,11 +53,7 @@ async def analyze_bouquet(photo_bytes: bytes):
         ]
     }
 
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json",
-    }
-
+    headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
     response = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=90)
     response.raise_for_status()
     data = response.json()
@@ -63,7 +63,7 @@ async def analyze_bouquet(photo_bytes: bytes):
 # --- Генерация изображения по составу ---
 async def generate_bouquet_image(bouquet_text: str):
     payload = {
-        "model": MODEL,
+        "model": DRAW_MODEL,
         "messages": [
             {
                 "role": "user",
@@ -77,24 +77,17 @@ async def generate_bouquet_image(bouquet_text: str):
         ]
     }
 
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json",
-    }
-
+    headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
     response = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=120)
     response.raise_for_status()
     data = response.json()
 
-    # Flux 2 Pro обычно возвращает base64 картинки в поле content
     content = data["choices"][0]["message"]["content"]
-    # Ищем base64 картинки (предполагаем, что модель возвращает в формате data:image/png;base64,...)
     if "data:image" in content:
         header, img_base64 = content.split(",", 1)
         img_bytes = base64.b64decode(img_base64)
         return io.BytesIO(img_bytes)
     else:
-        # если вернулся текст, создаем пустое изображение с подписью
         img = Image.new("RGB", (512, 512), color=(255, 255, 255))
         return img
 
@@ -107,10 +100,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         photo_bytes = await file.download_as_bytearray()
 
         text = await analyze_bouquet(photo_bytes)
-
         user_bouquet_state[update.message.from_user.id] = text
 
-        # Кнопки для пользователя
         keyboard = [
             [InlineKeyboardButton("💐 Сделать меньше", callback_data="smaller")],
             [InlineKeyboardButton("💐 Сделать больше/пышнее", callback_data="bigger")],
@@ -144,7 +135,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             prompt = f"Пересоставь этот букет, {instruction}:\n{current_bouquet}"
             payload = {
-                "model": MODEL,
+                "model": ANALYSIS_MODEL,
                 "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
             }
             headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
