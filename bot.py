@@ -1,18 +1,16 @@
 import os
 import io
 import base64
+import requests
+from PIL import Image
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
-from PIL import Image
-import requests
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
-GEMINI_URL = (
-    "https://generativelanguage.googleapis.com/v1/models/"
-    "gemini-1.5-flash:generateContent"
-)
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+MODEL = "qwen/qwen2.5-vl-72b-instruct"
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -25,45 +23,56 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         image = Image.open(io.BytesIO(photo_bytes))
         buf = io.BytesIO()
         image.save(buf, format="JPEG")
-
         img_base64 = base64.b64encode(buf.getvalue()).decode()
 
         payload = {
-            "contents": [{
-                "parts": [
-                    {
-                        "text": (
-                            "Проанализируй фото букета. "
-                            "Ответь на русском:\n"
-                            "1. Какие цветы\n"
-                            "2. Сколько примерно каждого\n"
-                            "3. Примерная стоимость в Москве"
-                        )
-                    },
-                    {
-                        "inline_data": {
-                            "mime_type": "image/jpeg",
-                            "data": img_base64
+            "model": MODEL,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "Проанализируй фото букета. Ответь на русском:\n"
+                                "1. Какие цветы\n"
+                                "2. Сколько примерно каждого вида\n"
+                                "3. Примерная стоимость букета в Москве"
+                            )
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{img_base64}"
+                            }
                         }
-                    }
-                ]
-            }]
+                    ]
+                }
+            ]
+        }
+
+        headers = {
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://railway.app",
+            "X-Title": "Flower Telegram Bot"
         }
 
         response = requests.post(
-            f"{GEMINI_URL}?key={GEMINI_API_KEY}",
+            OPENROUTER_URL,
+            headers=headers,
             json=payload,
-            timeout=30
+            timeout=60
         )
 
         if response.status_code != 200:
             await update.message.reply_text(
-                f"❌ Ошибка Gemini:\n{response.status_code}\n{response.text}"
+                f"❌ Ошибка AI:\n{response.status_code}\n{response.text}"
             )
             return
 
         data = response.json()
-        text = data["candidates"][0]["content"]["parts"][0]["text"]
+        text = data["choices"][0]["message"]["content"]
 
         await update.message.reply_text(f"🌸 Анализ:\n\n{text}")
 
@@ -75,10 +84,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT, handle_text))
-
     app.run_polling()
 
 if __name__ == "__main__":
