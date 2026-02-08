@@ -77,7 +77,7 @@ async def generate_bouquet_image(bouquet_text: str):
 # --- Обработка фото ---
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        await update.message.reply_text("🔍 Анализирую букет…")
+        await update.message.reply_text("🔍 Анализирую фото и подбираю цветы…")
         photo = update.message.photo[-1]
         file = await context.bot.get_file(photo.file_id)
         photo_bytes = await file.download_as_bytearray()
@@ -86,10 +86,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_bouquet_state[update.message.from_user.id] = text
 
         keyboard = [
-            [InlineKeyboardButton("💐 Меньше (~20%)", callback_data="smaller")],
-            [InlineKeyboardButton("💐 Больше (~20%)", callback_data="bigger")],
-            [InlineKeyboardButton("🎨 Рисунок", callback_data="draw")],
-            [InlineKeyboardButton("🛒 Купить", callback_data="order")]
+            [InlineKeyboardButton("💐 Сделать букет меньше (~20%)", callback_data="smaller")],
+            [InlineKeyboardButton("💐 Собрать пышнее и больше (~20%)", callback_data="bigger")],
+            [InlineKeyboardButton("🎨 Нарисовать примерный букет", callback_data="draw")],
+            [InlineKeyboardButton("🛒 Оформить заказ", callback_data="order")]
         ]
         await update.message.reply_text(f"{text}", reply_markup=InlineKeyboardMarkup(keyboard))
     except Exception as e:
@@ -105,11 +105,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if query.data in ["smaller", "bigger"]:
             if query.data == "smaller":
-                msg = "🔽 Формирую чуть меньший букет…"
-                instruction = "уменьши букет на 20%, сохрани стиль"
+                msg = "🔽 Собираю для вас чуть меньший букет…"
+                instruction = "уменьши букет на 20% по стоимости, сохрани стиль и изюминку букета. покупатель хочет немного сэкономить, не потеряв в качестве. дай короткий ответ с количеством цветков и итоговой суммой. "
             else:
                 msg = "🔼 Формирую пышнее букет…"
-                instruction = "увеличь букет на 20%, сохрани стиль"
+                instruction = "увеличь букет на 20% по стоимости, сохрани стиль и изюминку букета. покупатель хочет сделать более роскошный букет, сохранив его идею,, фишку, изюминку. дай короткий ответ с количеством цветков и итоговой суммой."
 
             await query.edit_message_text(msg)
 
@@ -125,13 +125,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_bouquet_state[user_id] = new_bouquet
 
             keyboard = [
-                [InlineKeyboardButton("🎨 Рисунок", callback_data="draw")],
-                [InlineKeyboardButton("🛒 Купить", callback_data="order")]
+                [InlineKeyboardButton("🎨 Нарисовать примерный букет", callback_data="draw")],
+                [InlineKeyboardButton("🛒 Оформить заказ", callback_data="order")]
             ]
             await query.message.reply_text(new_bouquet, reply_markup=InlineKeyboardMarkup(keyboard))
 
         elif query.data == "draw":
-            await query.edit_message_text("🎨 Генерирую рисунок...")
+            await query.edit_message_text("🎨 Рисую ваш букет...")
             img_io = await generate_bouquet_image(current_bouquet)
             if img_io:
                 await query.message.reply_photo(photo=InputFile(img_io, filename="bouquet.png"))
@@ -142,13 +142,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text("Что дальше?", reply_markup=InlineKeyboardMarkup(keyboard))
 
         elif query.data == "order":
-            await query.edit_message_text("✅ Заказ оформлен! Флорист получит состав букета.")
+            await query.edit_message_text("✅ Заказ оформлен! Передала ваш букет на сборку флористам в магазин, они начнут собирать его после предоплаты ❤️")
     except Exception as e:
         await query.message.reply_text(f"Ошибка при обработке: {e}")
 
 # --- Текстовые сообщения ---
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📸 Отправь фото букета")
+    await update.message.reply_text("📸 Пришлите фото букета")
 
 # --- Запуск ---
 def main():
