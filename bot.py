@@ -9,17 +9,13 @@ from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, Callb
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
-# Эндпоинт chat/completions
 CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
-
-# Модели
 ANALYSIS_MODEL = "google/gemma-3-12b-it:free"
 DRAW_MODEL = "blackforest/flux.2-pro"
 
-# Состояние пользователя
 user_bouquet_state = {}
 
-# --- Функция анализа фото ---
+# --- Анализ фото ---
 async def analyze_bouquet(photo_bytes: bytes):
     image = Image.open(io.BytesIO(photo_bytes))
     image.thumbnail((1024, 1024))
@@ -28,15 +24,14 @@ async def analyze_bouquet(photo_bytes: bytes):
     img_base64 = base64.b64encode(buf.getvalue()).decode()
 
     prompt = (
-        "📸 Проанализируй фото букета коротко:\n"
-        "🌸 Какие цветы и количество (в одном пункте, жирным, без звездочек)\n"
-        "💰 Средняя стоимость букета в рублях, коротко и конкретно\n"
-        "Используй эмодзи для удобного чтения."
+        "📸 Проанализируй фото букета и дай коротко:\n"
+        "🌸 Какие цветы и их количество (в одном пункте, жирным, без звездочек)\n"
+        "💰 Средняя стоимость букета в рублях, конкретно и коротко"
     )
 
     payload = {
         "model": ANALYSIS_MODEL,
-        "modalities": ["text","image"],
+        "modalities": ["text", "image"],
         "messages": [
             {
                 "role": "user",
@@ -47,7 +42,6 @@ async def analyze_bouquet(photo_bytes: bytes):
             }
         ]
     }
-
     headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
     response = requests.post(CHAT_URL, headers=headers, json=payload, timeout=90)
     response.raise_for_status()
@@ -56,20 +50,23 @@ async def analyze_bouquet(photo_bytes: bytes):
 
 # --- Генерация изображения ---
 async def generate_bouquet_image(bouquet_text: str):
-    prompt = f"🎨 Сгенерируй реалистичное изображение букета по составу:\n{bouquet_text}"
+    prompt = f"🎨 Сгенерируй реалистичное изображение букета:\n{bouquet_text}"
     payload = {
         "model": DRAW_MODEL,
-        "modalities": ["text","image"],
-        "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
+        "modalities": ["image", "text"],
+        "messages": [
+            {"role": "user", "content": [{"type": "text", "text": prompt}]}
+        ]
     }
-
     headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
     response = requests.post(CHAT_URL, headers=headers, json=payload, timeout=120)
     response.raise_for_status()
     data = response.json()
 
+    # В ответе должна быть секция images
     images = data["choices"][0]["message"].get("images", [])
     if images:
+        # Берём первый image_url.base64
         img_url = images[0]["image_url"]["url"]
         if img_url.startswith("data:image"):
             header, img_base64 = img_url.split(",", 1)
@@ -94,8 +91,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🎨 Рисунок", callback_data="draw")],
             [InlineKeyboardButton("🛒 Купить", callback_data="order")]
         ]
-        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-
+        await update.message.reply_text(f"{text}", reply_markup=InlineKeyboardMarkup(keyboard))
     except Exception as e:
         await update.message.reply_text(f"Ошибка: {e}")
 
@@ -112,7 +108,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 msg = "🔽 Формирую чуть меньший букет…"
                 instruction = "уменьши букет на 20%, сохрани стиль"
             else:
-                msg = "🔼 Формирую более пышный букет…"
+                msg = "🔼 Формирую пышнее букет…"
                 instruction = "увеличь букет на 20%, сохрани стиль"
 
             await query.edit_message_text(msg)
