@@ -78,7 +78,7 @@ async def generate_bouquet_image(bouquet_text: str):
 # --- Обработка фото ---
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        await update.message.reply_text("🔍 Анализирую букет…")
+        await update.message.reply_text("🔍 Анализирую фото и подбираю цветы…")
         photo = update.message.photo[-1]
         file = await context.bot.get_file(photo.file_id)
         photo_bytes = await file.download_as_bytearray()
@@ -87,9 +87,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_bouquet_state[update.message.from_user.id] = text
 
         keyboard = [
-            [InlineKeyboardButton("💐 Сделать меньше", callback_data="smaller")],
-            [InlineKeyboardButton("💐 Сделать больше/пышнее", callback_data="bigger")],
-            [InlineKeyboardButton("🎨 Получить рисунок", callback_data="draw")],
+            [InlineKeyboardButton("💐 Сделать букет меньше ~20%", callback_data="smaller")],
+            [InlineKeyboardButton("💐 Собрать пышнее и больше ~20%", callback_data="bigger")],
+            [InlineKeyboardButton("🎨 Нарисовать примерный букет", callback_data="draw")],
             [InlineKeyboardButton("🛒 Оформить заказ", callback_data="order")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -108,10 +108,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if query.data in ["smaller", "bigger"]:
             if query.data == "smaller":
-                msg = "🔽 Собираю для вас чуть меньший букет (~20% меньше), но сохраняю изюминку 🌸"
+                msg = "🔽 Собираю для вас чуть меньший букет (~20%), сохраняя его стиль и концепцию 🌸"
                 instruction = "уменьши букет на ~20%, сохрани концепцию и изюминку"
             else:
-                msg = "🔼 Собираю для вас более пышный букет (+20% цветов), сохраняю эффект и концепцию 🌸"
+                msg = "🔼 Собираю для вас более пышный букет (~20%), сохраняя его стиль и концепцию 🌸"
                 instruction = "увеличь букет на ~20%, сохрани концепцию и изюминку"
 
             await query.edit_message_text(msg)
@@ -129,14 +129,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_bouquet_state[user_id] = new_bouquet
 
             keyboard = [
-                [InlineKeyboardButton("🎨 Получить рисунок", callback_data="draw")],
+                [InlineKeyboardButton("🎨 Нарисовать примерный букет", callback_data="draw")],
                 [InlineKeyboardButton("🛒 Оформить заказ", callback_data="order")],
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.message.reply_text(f"{new_bouquet}", reply_markup=reply_markup)
 
         elif query.data == "draw":
-            await query.edit_message_text("🎨 Генерирую рисунок букета…")
+            await query.edit_message_text("🎨 Рисую ваш букет…")
             img_io = await generate_bouquet_image(current_bouquet)
             if isinstance(img_io, io.BytesIO):
                 await query.message.reply_photo(photo=InputFile(img_io, filename="bouquet.png"))
@@ -148,14 +148,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text("Что делать дальше?", reply_markup=reply_markup)
 
         elif query.data == "order":
-            await query.edit_message_text("✅ Заказ оформлен! Флорист получит состав букета. Для внесения предоплаты следуйте инструкциям.")
+            await query.edit_message_text("✅ Заказ оформлен! Передала ваш букет на сборку флористам в магазин, они начнут собирать его после предоплаты ❤️")
 
     except Exception as e:
         await query.message.reply_text(f"Ошибка при обработке кнопки: {str(e)}")
 
 # --- Обработка текста ---
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📸 Отправь фото букета")
+    await update.message.reply_text("📸 Пришлите фото желаемого букета")
 
 # --- Запуск бота ---
 def main():
