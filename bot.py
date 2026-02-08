@@ -9,10 +9,13 @@ from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, Callb
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
-CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
-ANALYSIS_MODEL = "google/gemma-3-12b-it:free"
-DRAW_MODEL = "black-forest-labs/flux.2-max"
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
+# Модели
+ANALYSIS_MODEL = "google/gemma-3-12b-it:free"
+DRAW_MODEL = "blackforest/flux.2-pro"
+
+# Состояние пользователя
 user_bouquet_state = {}
 
 # --- Анализ фото ---
@@ -25,13 +28,13 @@ async def analyze_bouquet(photo_bytes: bytes):
 
     prompt = (
         "📸 Проанализируй фото букета и дай коротко:\n"
-        "🌸 Какие цветы и их количество (в одном пункте, жирным, без звездочек)\n"
-        "💰 Средняя стоимость букета в рублях, конкретно и коротко"
+        "🌸 Какие цветы и количество (в одном пункте, жирным текстом)\n"
+        "💰 Средняя стоимость букета в рублях, конкретно, коротко\n"
+        "Используй эмодзи, делай текст лёгким и понятным."
     )
 
     payload = {
         "model": ANALYSIS_MODEL,
-        "modalities": ["text", "image"],
         "messages": [
             {
                 "role": "user",
@@ -42,42 +45,40 @@ async def analyze_bouquet(photo_bytes: bytes):
             }
         ]
     }
+
     headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
-    response = requests.post(CHAT_URL, headers=headers, json=payload, timeout=90)
+    response = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=90)
     response.raise_for_status()
     data = response.json()
     return data["choices"][0]["message"]["content"]
 
 # --- Генерация изображения ---
 async def generate_bouquet_image(bouquet_text: str):
-    prompt = f"🎨 Сгенерируй реалистичное изображение букета:\n{bouquet_text}"
+    # Для Flux 2 Pro делаем тот же чат-запрос, но текст только про генерацию картинки
+    prompt = f"🎨 Сгенерируй реалистичное изображение букета по составу:\n{bouquet_text}"
     payload = {
         "model": DRAW_MODEL,
-        "modalities": ["image", "text"],
-        "messages": [
-            {"role": "user", "content": [{"type": "text", "text": prompt}]}
-        ]
+        "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
     }
     headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
-    response = requests.post(CHAT_URL, headers=headers, json=payload, timeout=120)
+    response = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=120)
     response.raise_for_status()
     data = response.json()
 
-    # В ответе должна быть секция images
-    images = data["choices"][0]["message"].get("images", [])
-    if images:
-        # Берём первый image_url.base64
-        img_url = images[0]["image_url"]["url"]
-        if img_url.startswith("data:image"):
-            header, img_base64 = img_url.split(",", 1)
-            img_bytes = base64.b64decode(img_base64)
-            return io.BytesIO(img_bytes)
-    return None
+    content = data["choices"][0]["message"]["content"]
+    if "data:image" in content:
+        header, img_base64 = content.split(",", 1)
+        img_bytes = base64.b64decode(img_base64)
+        return io.BytesIO(img_bytes)
+    else:
+        # Если модель вернула текст вместо картинки, создаём пустое изображение
+        img = Image.new("RGB", (512, 512), color=(255, 255, 255))
+        return img
 
 # --- Обработка фото ---
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        await update.message.reply_text("🔍 Анализирую фото и подбираю цветы…")
+        await update.message.reply_text("🔍 Анализирую букет…")
         photo = update.message.photo[-1]
         file = await context.bot.get_file(photo.file_id)
         photo_bytes = await file.download_as_bytearray()
@@ -86,14 +87,16 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_bouquet_state[update.message.from_user.id] = text
 
         keyboard = [
-            [InlineKeyboardButton("💐 Сделать букет меньше (~20%)", callback_data="smaller")],
-            [InlineKeyboardButton("💐 Собрать пышнее и больше (~20%)", callback_data="bigger")],
-            [InlineKeyboardButton("🎨 Нарисовать примерный букет", callback_data="draw")],
-            [InlineKeyboardButton("🛒 Оформить заказ", callback_data="order")]
+            [InlineKeyboardButton("💐 Сделать меньше", callback_data="smaller")],
+            [InlineKeyboardButton("💐 Сделать больше/пышнее", callback_data="bigger")],
+            [InlineKeyboardButton("🎨 Получить рисунок", callback_data="draw")],
+            [InlineKeyboardButton("🛒 Оформить заказ", callback_data="order")],
         ]
-        await update.message.reply_text(f"{text}", reply_markup=InlineKeyboardMarkup(keyboard))
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(f"{text}", reply_markup=reply_markup)
+
     except Exception as e:
-        await update.message.reply_text(f"Ошибка: {e}")
+        await update.message.reply_text(f"Ошибка: {str(e)}")
 
 # --- Обработка кнопок ---
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -105,52 +108,56 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if query.data in ["smaller", "bigger"]:
             if query.data == "smaller":
-                msg = "🔽 Собираю для вас чуть меньший букет…"
-                instruction = "уменьши букет на 20% по стоимости, сохрани стиль и изюминку букета. покупатель хочет немного сэкономить, не потеряв в качестве. дай короткий ответ с количеством цветков и итоговой суммой. "
+                msg = "🔽 Собираю для вас чуть меньший букет (~20% меньше), но сохраняю изюминку 🌸"
+                instruction = "уменьши букет на ~20%, сохрани концепцию и изюминку"
             else:
-                msg = "🔼 Формирую пышнее букет…"
-                instruction = "увеличь букет на 20% по стоимости, сохрани стиль и изюминку букета. покупатель хочет сделать более роскошный букет, сохранив его идею,, фишку, изюминку. дай короткий ответ с количеством цветков и итоговой суммой."
+                msg = "🔼 Собираю для вас более пышный букет (+20% цветов), сохраняю эффект и концепцию 🌸"
+                instruction = "увеличь букет на ~20%, сохрани концепцию и изюминку"
 
             await query.edit_message_text(msg)
 
-            prompt = f"{instruction}:\n{current_bouquet}"
+            prompt = f"Коротко и понятно пересоставь букет, {instruction}:\n{current_bouquet}"
             payload = {
                 "model": ANALYSIS_MODEL,
                 "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
             }
             headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
-            resp = requests.post(CHAT_URL, headers=headers, json=payload, timeout=90)
-            resp.raise_for_status()
-            new_bouquet = resp.json()["choices"][0]["message"]["content"]
+            response = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=90)
+            response.raise_for_status()
+            data = response.json()
+            new_bouquet = data["choices"][0]["message"]["content"]
             user_bouquet_state[user_id] = new_bouquet
 
             keyboard = [
-                [InlineKeyboardButton("🎨 Нарисовать примерный букет", callback_data="draw")],
-                [InlineKeyboardButton("🛒 Оформить заказ", callback_data="order")]
+                [InlineKeyboardButton("🎨 Получить рисунок", callback_data="draw")],
+                [InlineKeyboardButton("🛒 Оформить заказ", callback_data="order")],
             ]
-            await query.message.reply_text(new_bouquet, reply_markup=InlineKeyboardMarkup(keyboard))
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.message.reply_text(f"{new_bouquet}", reply_markup=reply_markup)
 
         elif query.data == "draw":
-            await query.edit_message_text("🎨 Рисую ваш букет...")
+            await query.edit_message_text("🎨 Генерирую рисунок букета…")
             img_io = await generate_bouquet_image(current_bouquet)
-            if img_io:
+            if isinstance(img_io, io.BytesIO):
                 await query.message.reply_photo(photo=InputFile(img_io, filename="bouquet.png"))
             else:
-                await query.message.reply_text("❌ Не удалось сгенерировать картинку.")
+                await query.message.reply_text("Не удалось сгенерировать картинку, попробуйте позже.")
 
-            keyboard = [[InlineKeyboardButton("🛒 Купить", callback_data="order")]]
-            await query.message.reply_text("Что дальше?", reply_markup=InlineKeyboardMarkup(keyboard))
+            keyboard = [[InlineKeyboardButton("🛒 Отправить флористу и внести предоплату", callback_data="order")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.message.reply_text("Что делать дальше?", reply_markup=reply_markup)
 
         elif query.data == "order":
-            await query.edit_message_text("✅ Заказ оформлен! Передала ваш букет на сборку флористам в магазин, они начнут собирать его после предоплаты ❤️")
+            await query.edit_message_text("✅ Заказ оформлен! Флорист получит состав букета. Для внесения предоплаты следуйте инструкциям.")
+
     except Exception as e:
-        await query.message.reply_text(f"Ошибка при обработке: {e}")
+        await query.message.reply_text(f"Ошибка при обработке кнопки: {str(e)}")
 
-# --- Текстовые сообщения ---
+# --- Обработка текста ---
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📸 Пришлите фото букета")
+    await update.message.reply_text("📸 Отправь фото букета")
 
-# --- Запуск ---
+# --- Запуск бота ---
 def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
