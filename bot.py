@@ -11,7 +11,7 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
 ANALYSIS_MODEL = "google/gemma-3-12b-it:free"
-DRAW_MODEL = "blackforest/flux.2-pro"
+DRAW_MODEL = "black-forest-labs/flux.2-max"
 
 user_bouquet_state = {}
 
