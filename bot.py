@@ -10,7 +10,7 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-MODEL = "qwen/qwen2.5-vl-72b-instruct"
+MODEL = "blackforest/flux.2-pro"
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
